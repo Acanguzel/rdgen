@@ -22,10 +22,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.environ.get('SECRET_KEY','django-insecure-!(t-!f#6g#sr%yfded9(xha)g+=!6craeez^cp+*&bz_7vdk61')
 GHUSER = os.environ.get("GHUSER", 'acanguzel')
-GHBEARER = os.environ.get("GHBEARER", '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')
-GENURL = os.environ.get("GENURL", '')
+GHBEARER = os.environ.get("GHBEARER", '')
+GENURL = os.environ.get("GENURL", 'rdgen.evrenbil.com.tr')
 GHBRANCH = os.environ.get("GHBRANCH",'master')
-ZIP_PASSWORD = os.environ.get("ZIP_PASSWORD",'insecure')
+ZIP_PASSWORD = os.environ.get("ZIP_PASSWORD",'')
 PROTOCOL = os.environ.get("PROTOCOL", 'http')
 REPONAME = os.environ.get("REPONAME", 'rdgen')
 
