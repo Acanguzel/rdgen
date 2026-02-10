@@ -25,7 +25,7 @@ GHUSER = os.environ.get("GHUSER", 'acanguzel')
 GHBEARER = os.environ.get("GHBEARER", '')
 GENURL = os.environ.get("GENURL", 'rdgen.evrenbil.com.tr')
 GHBRANCH = os.environ.get("GHBRANCH",'master')
-ZIP_PASSWORD = os.environ.get("ZIP_PASSWORD",'')
+ZIP_PASSWORD = os.environ.get("ZIP_PASSWORD",'t-!f#6g#sr%yfded9(xha)g+=!6craeez^cp+*&bz_7vdk61')
 PROTOCOL = os.environ.get("PROTOCOL", 'http')
 REPONAME = os.environ.get("REPONAME", 'rdgen')
 
