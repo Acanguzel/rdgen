@@ -1,0 +1,313 @@
+name: Windesk Native Windows
+'on':
+  workflow_dispatch: {}
+permissions:
+  contents: read
+env:
+  SCITER_RUST_VERSION: '1.75'
+  RUST_VERSION: '1.75'
+  MAC_RUST_VERSION: '1.81'
+  CARGO_NDK_VERSION: 3.1.2
+  SCITER_ARMV7_CMAKE_VERSION: 3.29.7
+  SCITER_NASM_DEBVERSION: 2.15.05-1
+  LLVM_VERSION: 15.0.6
+  FLUTTER_VERSION: 3.24.5
+  FLUTTER_ELINUX_VERSION: 3.16.9
+  VCPKG_BINARY_SOURCES: clear;x-gha,readwrite
+  VCPKG_COMMIT_ID: 120deac3062162151622ca4860575a33844ba10b
+  ARMV7_VCPKG_COMMIT_ID: 6f29f12e82a8293156836ad81cc9bf5af41fe836
+  VERSION: 1.4.5
+  NDK_VERSION: r27c
+jobs:
+  generate-bridge:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        job:
+        - target: x86_64-unknown-linux-gnu
+          os: ubuntu-22.04
+          extra-build-args: ''
+    steps:
+    - name: Checkout source code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        repository: rustdesk/rustdesk
+        ref: 998b75856da4199ac009ce4135b4fba1b48099e6
+    - name: Install prerequisites
+      run: "sudo apt-get install ca-certificates -y\nsudo apt-get update -y\nsudo apt-get install -y \\\n  clang\
+        \ \\\n  cmake \\\n  curl \\\n  gcc \\\n  git \\\n  g++ \\\n  libclang-dev \\\n  libgtk-3-dev \\\n  llvm-dev\
+        \ \\\n  nasm \\\n  ninja-build \\\n  pkg-config \\\n  wget\n"
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@v1
+      with:
+        toolchain: ${{ env.RUST_VERSION }}
+        targets: ${{ matrix.job.target }}
+        components: rustfmt
+    - uses: Swatinem/rust-cache@v2
+      with:
+        prefix-key: bridge-${{ matrix.job.os }}
+    - name: Cache Bridge
+      id: cache-bridge
+      uses: actions/cache@v4
+      with:
+        path: /tmp/flutter_rust_bridge
+        key: vcpkg-${{ matrix.job.arch }}
+    - name: Install flutter
+      uses: subosito/flutter-action@v2
+      with:
+        channel: stable
+        flutter-version: ${{ env.FLUTTER_VERSION }}
+        cache: true
+    - name: Install flutter rust bridge deps
+      shell: bash
+      run: 'cargo install cargo-expand --version ${{ env.CARGO_EXPAND_VERSION }} --locked
+
+        cargo install flutter_rust_bridge_codegen --version ${{ env.FLUTTER_RUST_BRIDGE_VERSION }} --features "uuid"
+        --locked
+
+        pushd flutter && sed -i -e ''s/extended_text: 14.0.0/extended_text: 13.0.0/g'' pubspec.yaml && flutter pub
+        get && popd
+
+        '
+    - name: Run flutter rust bridge
+      run: '~/.cargo/bin/flutter_rust_bridge_codegen --rust-input ./src/flutter_ffi.rs --dart-output ./flutter/lib/generated_bridge.dart
+        --c-output ./flutter/macos/Runner/bridge_generated.h
+
+        cp ./flutter/macos/Runner/bridge_generated.h ./flutter/ios/Runner/bridge_generated.h
+
+        '
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: bridge-artifact
+        path: './src/bridge_generated.rs
+
+          ./src/bridge_generated.io.rs
+
+          ./flutter/lib/generated_bridge.dart
+
+          ./flutter/lib/generated_bridge.freezed.dart
+
+          ./flutter/macos/Runner/bridge_generated.h
+
+          ./flutter/ios/Runner/bridge_generated.h
+
+          '
+    env:
+      CARGO_EXPAND_VERSION: 1.0.95
+      FLUTTER_VERSION: 3.22.3
+      FLUTTER_RUST_BRIDGE_VERSION: 1.80.1
+      RUST_VERSION: '1.75'
+  build-for-windows-flutter:
+    name: ${{ matrix.job.target }}
+    needs:
+    - generate-bridge
+    runs-on: ${{ matrix.job.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        job:
+        - target: x86_64-pc-windows-msvc
+          os: windows-2022
+          arch: x86_64
+          vcpkg-triplet: x64-windows-static
+    steps:
+    - name: Export GitHub Actions cache environment variables
+      uses: actions/github-script@v6
+      with:
+        script: 'core.exportVariable(''ACTIONS_CACHE_URL'', process.env.ACTIONS_CACHE_URL || '''');
+
+          core.exportVariable(''ACTIONS_RUNTIME_TOKEN'', process.env.ACTIONS_RUNTIME_TOKEN || '''');
+
+          '
+    - name: Checkout source code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        repository: rustdesk/rustdesk
+        ref: 998b75856da4199ac009ce4135b4fba1b48099e6
+    - name: Checkout Windesk changes
+      uses: actions/checkout@v4
+      with:
+        path: windesk-repo
+    - name: Apply and brand Windesk
+      run: 'Expand-Archive windesk-repo/windesk-source.zip windesk
+
+        git apply --check windesk/windesk.patch
+
+        if ($LASTEXITCODE -ne 0) { throw ''Patch does not apply'' }
+
+        git apply windesk/windesk.patch
+
+        python windesk/brand.py
+
+        if ($LASTEXITCODE -ne 0) { throw ''Branding failed'' }
+
+        '
+    - name: Restore bridge files
+      uses: actions/download-artifact@v4
+      with:
+        name: bridge-artifact
+        path: ./
+    - name: Install LLVM and Clang
+      uses: KyleMayes/install-llvm-action@v1
+      with:
+        version: ${{ env.LLVM_VERSION }}
+    - name: Install flutter
+      uses: subosito/flutter-action@v2.12.0
+      with:
+        channel: stable
+        flutter-version: ${{ env.FLUTTER_VERSION }}
+    - name: Apply Windesk icons
+      run: 'python -m pip install pillow
+
+        python -c "from PIL import Image; from pathlib import Path; im=Image.open(''windesk/icon.png'').convert(''RGBA'');
+        im.save(''res/icon.png''); im.save(''res/icon.ico'',sizes=[(16,16),(32,32),(48,48),(64,64),(256,256)]);
+        im.save(''res/tray-icon.ico'',sizes=[(16,16),(32,32),(48,48)]); im.save(''flutter/windows/runner/resources/app_icon.ico'',sizes=[(16,16),(32,32),(48,48),(256,256)])"
+
+        '
+    - name: Replace engine with rustdesk custom flutter engine
+      run: 'flutter doctor -v
+
+        flutter precache --windows
+
+        Invoke-WebRequest -Uri https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip
+        -OutFile windows-x64-release.zip
+
+        Expand-Archive -Path windows-x64-release.zip -DestinationPath windows-x64-release
+
+        mv -Force windows-x64-release/*  C:/hostedtoolcache/windows/flutter/stable-${{ env.FLUTTER_VERSION }}-x64/bin/cache/artifacts/engine/windows-x64-release/
+
+        '
+    - name: Patch flutter
+      shell: bash
+      run: 'cp .github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff $(dirname $(dirname $(which flutter)))
+
+        cd $(dirname $(dirname $(which flutter)))
+
+        [[ "3.24.5" == ${{env.FLUTTER_VERSION}} ]] && git apply flutter_3.24.4_dropdown_menu_enableFilter.diff
+
+        '
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@v1
+      with:
+        toolchain: ${{ env.SCITER_RUST_VERSION }}
+        targets: ${{ matrix.job.target }}
+        components: rustfmt
+    - name: Test guest connection policy
+      shell: pwsh
+      run: 'rustc --edition 2021 --test src/windesk_policy.rs -o windesk-policy-tests.exe
+
+        if ($LASTEXITCODE -ne 0) { throw ''Policy test compilation failed'' }
+
+        ./windesk-policy-tests.exe
+
+        if ($LASTEXITCODE -ne 0) { throw ''Policy tests failed'' }
+
+        '
+    - uses: Swatinem/rust-cache@v2
+      with:
+        prefix-key: ${{ matrix.job.os }}
+    - name: Setup vcpkg with Github Actions binary cache
+      uses: lukka/run-vcpkg@v11
+      with:
+        vcpkgDirectory: C:\vcpkg
+        vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+        doNotCache: false
+    - name: Install vcpkg dependencies
+      env:
+        VCPKG_DEFAULT_HOST_TRIPLET: ${{ matrix.job.vcpkg-triplet }}
+      run: "if ! $VCPKG_ROOT/vcpkg \\\n  install \\\n  --triplet ${{ matrix.job.vcpkg-triplet }} \\\n  --x-install-root=\"\
+        $VCPKG_ROOT/installed\"; then\n  find \"${VCPKG_ROOT}/\" -name \"*.log\" | while read -r _1; do\n    echo\
+        \ \"$_1:\"\n    echo \"======\"\n    cat \"$_1\"\n    echo \"======\"\n    echo \"\"\n  done\n  exit 1\n\
+        fi\nhead -n 100 \"${VCPKG_ROOT}/buildtrees/ffmpeg/build-${{ matrix.job.vcpkg-triplet }}-rel-out.log\" ||\
+        \ true\n"
+      shell: bash
+    - name: Build rustdesk
+      run: "# Windows: build RustDesk\npython .\\build.py --portable --hwcodec --flutter --vram --skip-portable-pack\n\
+        if ($LASTEXITCODE -ne 0) { throw \"Native build failed\" }\nmv ./flutter/build/windows/x64/runner/Release\
+        \ ./rustdesk\n\n# Download usbmmidd_v2.zip and extract it to ./rustdesk\nInvoke-WebRequest -Uri https://github.com/rustdesk-org/rdev/releases/download/usbmmidd_v2/usbmmidd_v2.zip\
+        \ -OutFile usbmmidd_v2.zip\nExpand-Archive usbmmidd_v2.zip -DestinationPath .\nmv -Force .\\usbmmidd_v2\
+        \ ./rustdesk\n\n# Download printer driver files and extract them to ./rustdesk\ntry {\n  Invoke-WebRequest\
+        \ -Uri https://github.com/rustdesk/hbb_common/releases/download/driver/rustdesk_printer_driver_v4-1.4.zip\
+        \ -OutFile rustdesk_printer_driver_v4-1.4.zip\n  Invoke-WebRequest -Uri https://github.com/rustdesk/hbb_common/releases/download/driver/printer_driver_adapter.zip\
+        \ -OutFile printer_driver_adapter.zip\n  Invoke-WebRequest -Uri https://github.com/rustdesk/hbb_common/releases/download/driver/sha256sums\
+        \ -OutFile sha256sums\n\n  # Check and move the files\n  $checksum_driver = (Select-String -Path .\\sha256sums\
+        \ -Pattern '^([a-fA-F0-9]{64}) \\*rustdesk_printer_driver_v4-1.4\\.zip$').Matches.Groups[1].Value\n  $downloadsum_driver\
+        \ = Get-FileHash -Path rustdesk_printer_driver_v4-1.4.zip -Algorithm SHA256\n  $checksum_adapter = (Select-String\
+        \ -Path .\\sha256sums -Pattern '^([a-fA-F0-9]{64}) \\*printer_driver_adapter\\.zip$').Matches.Groups[1].Value\n\
+        \  $downloadsum_adapter = Get-FileHash -Path printer_driver_adapter.zip -Algorithm SHA256\n  if ($checksum_driver\
+        \ -eq $downloadsum_driver.Hash -and $checksum_adapter -eq $downloadsum_adapter.Hash) {\n      Write-Output\
+        \ \"rustdesk_printer_driver_v4-1.4, checksums match, extract the file.\"\n      Expand-Archive rustdesk_printer_driver_v4-1.4.zip\
+        \ -DestinationPath .\n      mkdir ./rustdesk/drivers\n      mv -Force .\\rustdesk_printer_driver_v4-1.4\
+        \ ./rustdesk/drivers/RustDeskPrinterDriver\n      Expand-Archive printer_driver_adapter.zip -DestinationPath\
+        \ .\n      mv -Force .\\printer_driver_adapter.dll ./rustdesk\n  } elseif ($checksum_driver -ne $downloadsum_driver.Hash)\
+        \ {\n      Write-Output \"rustdesk_printer_driver_v4-1.4, checksums do not match, ignore the file.\"\n \
+        \ } else {\n      Write-Output \"printer_driver_adapter.dll, checksums do not match, ignore the file.\"\n\
+        \  }\n} catch {\n    Write-Host \"Ingore the printer driver error.\"\n}"
+    - name: find Runner.res
+      shell: bash
+      run: "runner_res=$(find . -name \"Runner.res\");\nif [ \"$runner_res\" == \"\" ]; then\n  echo \"Runner.res:\
+        \ not found\";\nelse\n  echo \"Runner.res: $runner_res\";\n  cp $runner_res ./libs/portable/Runner.res;\n\
+        \  echo \"list ./libs/portable/Runner.res\";\n  ls -l ./libs/portable/Runner.res;\nfi\n"
+    - name: Add MSBuild to PATH
+      uses: microsoft/setup-msbuild@v2
+    - name: Build privacy window library
+      run: 'git clone https://github.com/rustdesk-org/RustDeskTempTopMostWindow WindeskPrivacy
+
+        git -C WindeskPrivacy checkout 53b548a5398624f7149a382000397993542ad796
+
+        msbuild WindeskPrivacy/WindowInjection/WindowInjection.vcxproj -p:Configuration=Release -p:Platform=x64
+        /p:TargetVersion=Windows10
+
+        if ($LASTEXITCODE -ne 0) { throw ''Privacy window build failed'' }
+
+        Copy-Item WindeskPrivacy/WindowInjection/x64/Release/WindowInjection.dll rustdesk/
+
+        '
+    - name: Build self-extracted executable
+      shell: bash
+      run: 'sed -i ''/dpiAware/d'' res/manifest.xml
+
+        mv ./rustdesk/rustdesk.exe ./rustdesk/Windesk.exe
+
+        cp windesk/logo.png ./rustdesk/data/flutter_assets/assets/logo.png
+
+        pushd ./libs/portable
+
+        pip3 install -r requirements.txt
+
+        python3 ./generate.py -f ../../rustdesk/ -o . -e ../../rustdesk/Windesk.exe
+
+        popd
+
+        mkdir -p ./SignOutput
+
+        mv ./target/release/rustdesk-portable-packer.exe ./SignOutput/Windesk-Agent.exe
+
+        '
+    - name: Create release manifest
+      shell: pwsh
+      run: '$hash = (Get-FileHash SignOutput/Windesk-Agent.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+
+        @{version=''1.4.5.1'';url=''https://windesk.tr/download/Windesk-Agent-1.4.5.1.exe'';sha256=$hash} | ConvertTo-Json
+        | Set-Content SignOutput/windesk-version.json -Encoding utf8
+
+        Copy-Item windesk-repo/windesk-source.zip SignOutput/
+
+        '
+    - name: Upload Windesk executable
+      uses: actions/upload-artifact@v4
+      with:
+        name: Windesk-1.4.5.1-windows-x64
+        path: SignOutput/
+        if-no-files-found: error
+    - name: Upload unpacked Windesk
+      uses: actions/upload-artifact@v4
+      with:
+        name: Windesk-unpacked
+        path: rustdesk/
+        if-no-files-found: error
+    timeout-minutes: 120
