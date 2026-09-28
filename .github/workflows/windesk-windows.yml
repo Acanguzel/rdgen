@@ -292,7 +292,7 @@ jobs:
       shell: pwsh
       run: '$hash = (Get-FileHash SignOutput/Windesk-Agent.exe -Algorithm SHA256).Hash.ToLowerInvariant()
 
-        @{version=''1.4.5.1'';url=''https://windesk.tr/download/Windesk-Agent-1.4.5.1.exe'';sha256=$hash} | ConvertTo-Json
+        @{version=''1.4.5.2'';url=''https://windesk.tr/download/Windesk-Agent-1.4.5.2.exe'';sha256=$hash} | ConvertTo-Json
         | Set-Content SignOutput/windesk-version.json -Encoding utf8
 
         Copy-Item windesk-repo/windesk-source.zip SignOutput/
@@ -301,7 +301,7 @@ jobs:
     - name: Upload Windesk executable
       uses: actions/upload-artifact@v4
       with:
-        name: Windesk-1.4.5.1-windows-x64
+        name: Windesk-1.4.5.2-windows-x64
         path: SignOutput/
         if-no-files-found: error
     - name: Upload unpacked Windesk
